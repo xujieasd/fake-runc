@@ -46,6 +46,7 @@
 
 #define FAKE_BR "enn0"
 #define FAKE_BR_IP "172.144.0.1/24"
+#define FAKE_BR_ROUTE_IP "172.144.0.1"
 #define Container_IP "172.144.0.10/24"
 #define tempName "veth0"
 
@@ -234,6 +235,14 @@ int setup_container_network()
     if (system(cmd) == -1)
     {
         printf("ifconfig eth0 fail\n");
+        return -1;
+    }
+
+    // add route so container can access outside
+    sprintf(cmd, "ip route add default via %s", FAKE_BR_ROUTE_IP);
+    if (system(cmd) == -1)
+    {
+        printf("ip route add default fail\n");
         return -1;
     }
 
