@@ -44,6 +44,13 @@
 #define STACK_SIZE 8*1024
 #define ROOT_PATH "/home/dai/rootfs"
 
+#define FAKE_BR "enn0"
+#define FAKE_BR_IP "172.144.0.1/24"
+#define Container_IP "172.144.0.10/24"
+#define tempName "veth0"
+
+int fd[2];
+
 // pid isolation, needs flag CLONE_NEWPID,
 // so you will see getpid is 0 and getppid is 0
 void get_container_pid()
@@ -63,7 +70,6 @@ void set_host_name()
 
 int prepare_root()
 {
-
     // if pivot fail, maybe you have shared mount points
     // run "grep -iP '/ /\s' /proc/$$/mountinfo" to see if there is shared info
     // run "unshare -m" to unshare mounts namespace, or pivot will not work!!
@@ -207,8 +213,38 @@ int pivot_rootfs()
     return 0;
 }
 
+int setup_container_network()
+{
+    char cmd[100];
+
+    if (system("ip link set lo up") == -1)
+    {
+        printf("ip link set lo up fail\n");
+        return -1;
+    }
+
+    sprintf(cmd, "ip link set dev %s name eth0", tempName);
+    if (system(cmd) == -1)
+    {
+        printf("ip link set %s name fail\n", tempName);
+        return -1;
+    }
+
+    sprintf(cmd, "ifconfig eth0 %s up", Container_IP);
+    if (system(cmd) == -1)
+    {
+        printf("ifconfig eth0 fail\n");
+        return -1;
+    }
+
+    return 0;
+}
+
 int child_container()
 {
+    char c;
+    close(fd[1]);
+
     get_container_pid();
 
     set_host_name();
@@ -220,6 +256,9 @@ int child_container()
     //if (move_rootfs() != 0){exit(1);}
     if (pivot_rootfs() != 0){exit(1);}
 
+    read(fd[0], &c, 1);
+    if (setup_container_network() != 0){exit(1);}
+
     // run bash
     char* env[] = {"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "TERM=xterm", NULL};
     execle("/bin/bash", NULL, env);
@@ -227,12 +266,76 @@ int child_container()
     exit(0);
 }
 
+int create_fake_bridge()
+{
+    char cmd[100];
+    sprintf(cmd, "brctl addbr %s", FAKE_BR);
+    if (system(cmd) == -1)
+    {
+        printf("brctl addbr fail\n");
+        return -1;
+    }
+
+    sprintf(cmd, "ifconfig %s %s up", FAKE_BR, FAKE_BR_IP);
+    if (system(cmd) == -1)
+    {
+        printf("ifconfig br %s fail\n", FAKE_BR);
+        return -1;
+    }
+    return 0;
+}
+
+int prepare_network(int child_pid)
+{
+    char peer_name[20];
+    char cmd[100];
+
+    srand((unsigned)time(NULL));
+    sprintf(peer_name, "%s.%d", FAKE_BR, rand()%1000000 +1);
+
+    // create veth peer
+    sprintf(cmd, "ip link add %s type veth peer name %s", tempName, peer_name);
+    if (system(cmd) == -1)
+    {
+        printf("ip link add veth0 fail\n");
+        return -1;
+    }
+
+    // add veth link to bridge
+    sprintf(cmd, "ip link set %s master %s", peer_name, FAKE_BR);
+    if (system(cmd) == -1)
+    {
+        printf("ip link set %s master fail\n", peer_name);
+        return -1;
+    }
+
+    // set veth link up
+    sprintf(cmd, "ip link set %s up", peer_name);
+    if (system(cmd) == -1)
+    {
+        printf("ip link set %s up fail\n", peer_name);
+        return -1;
+    }
+
+    // set veth to netns
+    sprintf(cmd, "ip link set %s netns %d", tempName, child_pid);
+    if (system(cmd) == -1)
+    {
+        printf("ip link set %s netns fail\n", tempName);
+        return -1;
+    }
+
+    return 0;
+}
+
 void main()
 {
     void *stack;
     int result;
-
     char host[100];
+
+    if (pipe(fd) < 0){exit(1);}
+
     if (gethostname(host, sizeof(host)) < 0)
     {
         printf("get host name error\n");
@@ -241,8 +344,7 @@ void main()
 
     printf("this is parent, host name is:%s\n", host);
 
-    result = system("brctl addbr enn0");
-    printf("this is parent brctl result is %d\n",result);
+    if (create_fake_bridge()!= 0){exit(1);}
 
     stack = malloc(STACK_SIZE);
     if (!stack)
@@ -260,6 +362,8 @@ void main()
     }
     printf("this is parent, child pid is:%d, parent pid id is:%d\n", pid, getpid());
 
+    if (prepare_network(pid)!=0){exit(1);}
+    close(fd[1]);
 
     waitpid(pid,NULL,0);
     free(stack);
