@@ -61,6 +61,21 @@ void set_host_name()
     printf("container host name is:%s\n", host);
 }
 
+int prepare_root()
+{
+
+    // if pivot fail, maybe you have shared mount points
+    // run "grep -iP '/ /\s' /proc/$$/mountinfo" to see if there is shared info
+    // run "unshare -m" to unshare mounts namespace, or pivot will not work!!
+    if (mount(ROOT_PATH, ROOT_PATH, "", MS_BIND|MS_REC, NULL) != 0)
+    {
+        printf("MS_BIND|MS_REC mount rootfs %s fail because: %s [%d]\n", ROOT_PATH, strerror(errno), errno);
+        return -1;
+    }
+
+    return 0;
+}
+
 int mount_dev(const char* source, char* target, const char* type, unsigned long flag, char* data)
 {
     struct stat buffer;
@@ -116,24 +131,79 @@ int mount_to_rootfs()
     {
         return -1;
     }
-/*    struct stat buffer;
 
-    char proc_path[50];
-    char sysfs_path[50];
-    sprintf(proc_path, "%s/proc", ROOT_PATH);
-    printf("proc path: %s\n", proc_path);
+    return 0;
+}
 
-    if (stat(proc_path, &buffer) != 0)
+int move_rootfs()
+{
+    if (chdir(ROOT_PATH) != 0)
     {
-        mkdir(proc_path, 0755);
-    }
-
-    if (mount("proc", proc_path, "proc", defaultMountFlags, NULL) != 0)
-    {
-        printf("mount proc fail because: %s [%d]\n", strerror(errno), errno);
+        printf("chdir fail because: %s [%d]\n", strerror(errno), errno);
         return -1;
     }
-*/
+
+    if (mount(ROOT_PATH, "/", "", MS_MOVE, NULL) != 0)
+    {
+        printf("MS_MOVE mount %s fail because: %s [%d]\n", ROOT_PATH, strerror(errno), errno);
+        return -1;
+    }
+
+    if (chroot(".") != 0)
+    {
+        printf("chroot fail because: %s [%d]\n", strerror(errno), errno);
+        return -1;
+    }
+
+    if (chdir("/") != 0)
+    {
+        printf("chdir fail because: %s [%d]\n", strerror(errno), errno);
+        return -1;
+    }
+
+    return 0;
+}
+
+int pivot_rootfs()
+{
+    if (chdir(ROOT_PATH) != 0)
+    {
+        printf("chdir fail because: %s [%d]\n", strerror(errno), errno);
+        return -1;
+    }
+
+    struct stat buffer;
+    char putold_path[50];
+    sprintf(putold_path, "%s/%s", ROOT_PATH, "putold");
+    printf("putold path: %s\n", putold_path);
+
+    if (stat(putold_path, &buffer) != 0)
+    {
+        mkdir(putold_path, 0700);
+    }
+
+    if (pivot_root(ROOT_PATH, "/home/dai/rootfs/putold") != 0)
+    {
+        printf("pivot_root fail because: %s [%d]\n", strerror(errno), errno);
+        return -1;
+    }
+
+    if (chdir("/") != 0)
+    {
+        printf("chdir fail because: %s [%d]\n", strerror(errno), errno);
+        return -1;
+    }
+
+    const char* putold = "putold";
+
+    if (umount2(putold, MNT_DETACH) != 0)
+    {
+        printf("umount2 putold fail because: %s [%d]\n", strerror(errno), errno);
+        return -1;
+    }
+
+    rmdir(putold);
+
     return 0;
 }
 
@@ -143,28 +213,12 @@ int child_container()
 
     set_host_name();
 
-    if (mount_to_rootfs() != 0)
-    {
-        exit(1);
-    }
+    if (prepare_root() != 0){exit(1);}
 
-    if (chdir(ROOT_PATH) != 0)
-    {
-        printf("chdir fail because: %s [%d]\n", strerror(errno), errno);
-        exit(1);
-    }
+    if (mount_to_rootfs() != 0){exit(1);}
 
-    if (chroot(".") != 0)
-    {
-        printf("chroot fail because: %s [%d]\n", strerror(errno), errno);
-        exit(1);
-    }
-
-    if (chdir("/") != 0)
-    {
-        printf("chdir fail because: %s [%d]\n", strerror(errno), errno);
-        exit(1);
-    }
+    //if (move_rootfs() != 0){exit(1);}
+    if (pivot_rootfs() != 0){exit(1);}
 
     // run bash
     char* env[] = {"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "TERM=xterm", NULL};
@@ -176,6 +230,7 @@ int child_container()
 void main()
 {
     void *stack;
+    int result;
 
     char host[100];
     if (gethostname(host, sizeof(host)) < 0)
@@ -185,6 +240,9 @@ void main()
     }
 
     printf("this is parent, host name is:%s\n", host);
+
+    result = system("brctl addbr enn0");
+    printf("this is parent brctl result is %d\n",result);
 
     stack = malloc(STACK_SIZE);
     if (!stack)
@@ -201,6 +259,7 @@ void main()
         exit(1);
     }
     printf("this is parent, child pid is:%d, parent pid id is:%d\n", pid, getpid());
+
 
     waitpid(pid,NULL,0);
     free(stack);
