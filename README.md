@@ -52,6 +52,10 @@ $ make
 $ sudo ./fake-runc
 ```
 
+> if run fake-runc failed at pivot root step, maybe because you have shared mount points  
+> run "grep -iP '/ /\s' /proc/$$/mountinfo" to see if there is shared info  
+> run "unshare -m" to unshare mounts namespace, or pivot will not work  
+
 e.g
 ```
 root@dai-Precision-Tower-3620:/home/dai/go/src/fake-runc# ./fake-runc 
