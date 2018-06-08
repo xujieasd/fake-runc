@@ -42,7 +42,8 @@
 #define HOST_NAME_LEN  12
 
 #define STACK_SIZE 8*1024
-#define ROOT_PATH "/home/dai/rootfs"
+//#define ROOT_PATH "/home/dai/rootfs"
+#define ROOT_PATH "/tmp/ubuntu/rootfs"
 
 #define FAKE_BR "enn0"
 #define FAKE_BR_IP "172.144.0.1/24"
@@ -171,6 +172,7 @@ int move_rootfs()
     return 0;
 }
 
+// change root so that mount operate in container will not break host mount points
 int pivot_rootfs()
 {
     if (chdir(ROOT_PATH) != 0)
@@ -189,7 +191,7 @@ int pivot_rootfs()
         mkdir(putold_path, 0700);
     }
 
-    if (pivot_root(ROOT_PATH, "/home/dai/rootfs/putold") != 0)
+    if (pivot_root(ROOT_PATH, putold_path) != 0)
     {
         printf("pivot_root fail because: %s [%d]\n", strerror(errno), errno);
         return -1;
@@ -214,6 +216,7 @@ int pivot_rootfs()
     return 0;
 }
 
+// network isolation, needs flag CLONE_NEWNET
 int setup_container_network()
 {
     char cmd[100];
