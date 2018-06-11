@@ -46,9 +46,9 @@
 #define ROOT_PATH "/tmp/ubuntu/rootfs"
 
 #define FAKE_BR "enn0"
-#define FAKE_BR_IP "172.144.0.1/24"
-#define FAKE_BR_ROUTE_IP "172.144.0.1"
-#define Container_IP "172.144.0.10/24"
+#define FAKE_BR_IP "172.20.0.1/24"
+#define FAKE_BR_ROUTE_IP "172.20.0.1"
+#define Container_IP "172.20.0.10/24"
 #define tempName "veth0"
 
 int fd[2];
@@ -249,6 +249,13 @@ int setup_container_network()
         return -1;
     }
 
+    // edit resolv.conf so that container can use domain name
+    if (system("echo nameserver 8.8.8.8 > /etc/resolv.conf") == -1)
+    {
+        printf("ip route add default fail\n");
+        return -1;
+    }
+
     return 0;
 }
 
@@ -337,6 +344,14 @@ int prepare_network(int child_pid)
         return -1;
     }
 
+    // set snat so that container can access outside ip
+    sprintf(cmd, "iptables -t nat -A POSTROUTING -s %s ! -o %s -j MASQUERADE", FAKE_BR_IP, FAKE_BR);
+    if (system(cmd) == -1)
+    {
+        printf("iptables set %s snat fail\n", FAKE_BR);
+        return -1;
+    }
+
     return 0;
 }
 
@@ -368,6 +383,14 @@ int set_gid_map(pid_t pid, int inside_id, int outside_id, int len)
     fprintf(fd, "%d %d %d", inside_id, outside_id, len);
     fclose(fd);
     return 0;
+}
+
+void clenup_network()
+{
+    char cmd[100];
+    sprintf(cmd, "iptables -t nat -D POSTROUTING -s %s ! -o %s -j MASQUERADE", FAKE_BR_IP, FAKE_BR);
+    system(cmd);
+
 }
 
 void main()
@@ -414,6 +437,7 @@ void main()
 
     waitpid(pid,NULL,0);
     free(stack);
+    clenup_network();
 
     exit(0);
 
