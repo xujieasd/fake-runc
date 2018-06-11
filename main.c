@@ -256,6 +256,7 @@ int child_container()
 {
     char c;
     close(fd[1]);
+    read(fd[0], &c, 1);
 
     get_container_pid();
 
@@ -268,7 +269,6 @@ int child_container()
     //if (move_rootfs() != 0){exit(1);}
     if (pivot_rootfs() != 0){exit(1);}
 
-    read(fd[0], &c, 1);
     if (setup_container_network() != 0){exit(1);}
 
     // run bash
@@ -340,11 +340,43 @@ int prepare_network(int child_pid)
     return 0;
 }
 
+int set_uid_map(pid_t pid, int inside_id, int outside_id, int len)
+{
+    char file[100];
+    sprintf("file", "proc/%d/uid_map", pid);
+    FILE *fd = fopen(file, "w");
+    if (fd == NULL)
+    {
+        printf("fopen fd %s error\n", file);
+        return -1;
+    }
+    fprintf(fd, "%d %d %d", inside_id, outside_id, len);
+    fclose(fd);
+    return 0;
+}
+
+int set_gid_map(pid_t pid, int inside_id, int outside_id, int len)
+{
+    char file[100];
+    sprintf("file", "proc/%d/gid_map", pid);
+    FILE *fd = fopen(file, "w");
+    if (fd == NULL)
+    {
+        printf("fopen fd %s error\n", file);
+        return -1;
+    }
+    fprintf(fd, "%d %d %d", inside_id, outside_id, len);
+    fclose(fd);
+    return 0;
+}
+
 void main()
 {
     void *stack;
     int result;
     char host[100];
+    int gid = getgid();
+    int uid = getuid();
 
     if (pipe(fd) < 0){exit(1);}
 
@@ -372,7 +404,10 @@ void main()
         printf("clone child error pid is:%d\n", pid);
         exit(1);
     }
-    printf("this is parent, child pid is:%d, parent pid id is:%d\n", pid, getpid());
+    printf("this is parent, child pid is:%d, parent pid id is:%d, gid is:%d, uid is:%d\n", pid, getpid(), gid, uid);
+
+//    if (set_uid_map(pid, 0, uid, 1)!=0){exit(1);}
+//    if (set_gid_map(pid, 0, gid, 1)!=0){exit(1);}
 
     if (prepare_network(pid)!=0){exit(1);}
     close(fd[1]);
